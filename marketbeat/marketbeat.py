@@ -55,7 +55,7 @@ def readTable(url: str, search_string=None) -> Tuple[list, list]:
             print("Error with row: {}".format(i))
 
     # Clean up the DataFrame
-    return headers, data
+    return headers, data, soup
 
 
 def buildDataFrame(data: List[dict]) -> pd.DataFrame:
@@ -64,6 +64,7 @@ def buildDataFrame(data: List[dict]) -> pd.DataFrame:
     :return DataFrame containing analyst ratings data
     """
     df = pd.DataFrame(data)
+    df.drop(['brokerage_code'], axis=1, errors='ignore', inplace=True)
     df.index = [x for x in zip(df['date'], df['symbol'], df['brokerage'])]  # Hashed index
     return df
 
@@ -87,7 +88,8 @@ def parseBrokerageTag(tag: bs4.element.Tag) -> Tuple[str, Union[str, int]]:
     """
     # Getting brokerage code from href string similar to
     # /ratings/by-issuer/34/ OR /ratings/by-issuer/morgan-stanley-stock-recommendations
-    brokerage_code = tag.find("a").get('href').split('/')[-2].replace("-stock-recommendations", "")
+    href = tag.find("a").get("href")
+    brokerage_code = re.match('/ratings/by-issuer/([-\w]+)', href).groups()[0].replace("-stock-recommendations", "")
     brokerage = tag.find("a").text
     return brokerage, brokerage_code
 
@@ -109,7 +111,7 @@ def parsePriceTargetTag(tag: bs4.element.Tag) -> float:
     :return: price target
     """
     pt = tag.text.split(u"\u279D")[-1]
-    price_target = float(pt.replace('$', '').strip())
+    price_target = float(pt.replace('$', '').replace(',', '').strip())
     return price_target
 
 
@@ -136,6 +138,7 @@ def getDailyRatingsTable() -> pd.DataFrame:
     """Get current analyst ratings from MarketBeat
     :return: DataFrame containing analyst ratings for multiple symbols from today
     """
+
     def processRow() -> dict:
         # Column 0 - Ticker
         symbol, company, exchange = parseSymbolTag(row[0])
@@ -157,7 +160,7 @@ def getDailyRatingsTable() -> pd.DataFrame:
 
         return {
             "symbol": symbol,
-            "date": datetime.today().strftime(DATE_FORMAT),
+            "date": date,
             "exchange": exchange,
             "action": action,
             "brokerage": brokerage,
@@ -167,11 +170,20 @@ def getDailyRatingsTable() -> pd.DataFrame:
             "rating": rating,
             "rating_code": rating_code
         }
+
     # END processRow ----------------------------
 
     # Read table data, we don't need the headers
     url = BASE_URL + "/ratings/us/"
-    _, data = readTable(url)
+    _, data, soup = readTable(url)
+
+    # Get date from page source, prefer to use date from page if possible
+    DATE_RE = re.compile('\((\d{1,2}/\d{1,2}/\d{4})\)')
+    date = datetime.today().strftime(DATE_FORMAT)
+    tag = soup.find("div", string=DATE_RE)
+    if tag is not None:
+        date = DATE_RE.search(tag.text).groups()[0]
+        date = datetime.strptime(date, '%m/%d/%Y').strftime(DATE_FORMAT)
 
     # Process each row and store
     row_data = []
@@ -187,6 +199,7 @@ def getSymbolRatingsTable(symbol: str) -> pd.DataFrame:
     """Get historical analyst ratings for a single symbol from MarketBeat
     :return: DataFrame containing analyst ratings for a single symbol
     """
+
     def processRow() -> dict:
 
         # Column 0 - Date
@@ -219,6 +232,7 @@ def getSymbolRatingsTable(symbol: str) -> pd.DataFrame:
             "rating": rating,
             "rating_code": rating_code
         }
+
     # END processRow ----------------------------
 
     # Get main page to determine exchange
@@ -232,7 +246,7 @@ def getSymbolRatingsTable(symbol: str) -> pd.DataFrame:
 
     # Read table data, we don't need the headers
     url = BASE_URL + href
-    _, data = readTable(url, search_string="Ratings History")
+    _, data, _ = readTable(url, search_string="Ratings History")
 
     # Process each row and store
     row_data = []
