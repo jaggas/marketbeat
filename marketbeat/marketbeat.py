@@ -65,7 +65,8 @@ def buildDataFrame(data: List[dict]) -> pd.DataFrame:
     """
     df = pd.DataFrame(data)
     df.drop(['brokerage_code'], axis=1, errors='ignore', inplace=True)
-    df.index = [x for x in zip(df['date'], df['symbol'], df['brokerage'])]  # Hashed index
+    index = df[['date', 'symbol', 'brokerage']].apply(lambda row: '_'.join(row.values.astype(str)), axis=1)
+    df.insert(0, 'uid', index)
     return df
 
 
